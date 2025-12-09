@@ -1,15 +1,213 @@
+Для того чтобы анимация работала на Android (и iPhone), нужно добавить обработку событий касания (`touch events`), так как на телефонах нет «курсора мыши».
+
+Вот ключевые изменения, которые я внес:
+1.  **CSS:** Добавил `touch-action: none` для canvas. Это запрещает браузеру скроллить страницу, когда вы водите пальцем по анимации.
+2.  **JS:** Добавил слушатели `touchstart`, `touchmove` и `touchend`. Они передают координаты первого пальца в переменную `mouse`.
+
+Вот полный готовый код:
+
+```html
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-    <title>Shadow Operative</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Chaotic Nebula Mobile</title>
     <style>
-        * { margin: 0; padding: 0; }
-        body { background: #000; overflow: hidden; }
-        canvas { display: block; }
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+            /* ВАЖНО: Запрещает скролл и зум при касании к холсту */
+            touch-action: none; 
+        }
+        .ui {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.4);
+            pointer-events: none;
+            user-select: none;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
-    <canvas id="game"></canvas>
-    <script src="game.js"></script>
+
+<div class="ui">Касание создает вихри</div>
+<canvas id="canvas1"></canvas>
+
+<script>
+    const canvas = document.getElementById('canvas1');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    let time = 0; 
+    // На мобильных лучше чуть уменьшить кол-во частиц для производительности,
+    // но современные телефоны потянут и 600.
+    const numberOfParticles = 600; 
+    let particlesArray = [];
+
+    const mouse = {
+        x: null,
+        y: null,
+        radius: 200 // Радиус воздействия
+    }
+
+    // --- ОБРАБОТКА МЫШИ (Desktop) ---
+    window.addEventListener('mousemove', (e) => {
+        mouse.x = e.x;
+        mouse.y = e.y;
+    });
+    
+    window.addEventListener('mouseout', () => {
+        mouse.x = null;
+        mouse.y = null;
+    });
+
+    // --- ОБРАБОТКА КАСАНИЙ (Mobile) ---
+    
+    // Касание пальцем
+    window.addEventListener('touchstart', (e) => {
+        mouse.x = e.touches[0].clientX;
+        mouse.y = e.touches[0].clientY;
+    });
+
+    // Движение пальцем
+    window.addEventListener('touchmove', (e) => {
+        mouse.x = e.touches[0].clientX;
+        mouse.y = e.touches[0].clientY;
+    });
+
+    // Палец убран
+    window.addEventListener('touchend', () => {
+        mouse.x = null;
+        mouse.y = null;
+    });
+
+    // Ресайз экрана (поворот телефона)
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        init();
+    });
+
+    class Particle {
+        constructor() {
+            this.reset();
+            this.x = Math.random() * canvas.width;
+            this.y = Math.random() * canvas.height;
+        }
+
+        reset() {
+            this.x = Math.random() * canvas.width;
+            this.y = Math.random() * canvas.height;
+            this.speedModifier = Math.random() * 2 + 0.5; 
+            this.angleVariation = Math.random() * 0.5 - 0.25; 
+            this.history = []; 
+            this.maxLength = Math.random() * 40 + 10; 
+            this.lifeSpan = Math.random() * 200 + 50; 
+            this.timer = 0;
+        }
+
+        update() {
+            this.timer++;
+            if (this.timer > this.lifeSpan) {
+                this.reset();
+            }
+
+            let angle = (Math.cos(this.x * 0.005 + time) + Math.sin(this.y * 0.005 + time)) * 2;
+            angle += this.angleVariation;
+            angle += (Math.random() - 0.5) * 0.5;
+
+            let velX = Math.cos(angle) * this.speedModifier;
+            let velY = Math.sin(angle) * this.speedModifier;
+
+            if (mouse.x != null) {
+                let dx = mouse.x - this.x;
+                let dy = mouse.y - this.y;
+                let distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < mouse.radius) {
+                    const force = (mouse.radius - distance) / mouse.radius;
+                    const angleToMouse = Math.atan2(dy, dx);
+                    velX += Math.cos(angleToMouse + 1.5) * force * 5; 
+                    velY += Math.sin(angleToMouse + 1.5) * force * 5;
+                }
+            }
+
+            this.x += velX;
+            this.y += velY;
+
+            // Логика телепортации без "крестов"
+            let teleported = false;
+            const buffer = 50; // Запас за краем экрана
+
+            if (this.x < -buffer) { this.x = canvas.width + buffer; teleported = true; }
+            else if (this.x > canvas.width + buffer) { this.x = -buffer; teleported = true; }
+            
+            if (this.y < -buffer) { this.y = canvas.height + buffer; teleported = true; }
+            else if (this.y > canvas.height + buffer) { this.y = -buffer; teleported = true; }
+
+            if (teleported) {
+                this.history = []; 
+            } else {
+                this.history.push({x: this.x, y: this.y});
+                if (this.history.length > this.maxLength) {
+                    this.history.shift();
+                }
+            }
+        }
+
+        draw() {
+            let colorSpeed = time * 20 + (this.x * 0.5); 
+            ctx.strokeStyle = `hsl(${colorSpeed}, 70%, 50%)`;
+            
+            ctx.beginPath();
+            if(this.history.length > 0){
+                ctx.moveTo(this.history[0].x, this.history[0].y);
+                for (let i = 0; i < this.history.length; i++) {
+                    ctx.lineTo(this.history[i].x, this.history[i].y);
+                }
+            }
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+    }
+
+    function init() {
+        particlesArray = [];
+        for (let i = 0; i < numberOfParticles; i++) {
+            particlesArray.push(new Particle());
+        }
+    }
+
+    function animate() {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'; 
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.globalCompositeOperation = 'lighter'; 
+
+        for (let i = 0; i < particlesArray.length; i++) {
+            particlesArray[i].update();
+            particlesArray[i].draw();
+        }
+        
+        ctx.globalCompositeOperation = 'source-over';
+        time += 0.005; 
+        requestAnimationFrame(animate);
+    }
+
+    init();
+    animate();
+
+</script>
 </body>
 </html>
+```
